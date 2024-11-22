@@ -1,101 +1,215 @@
-import Image from "next/image";
+"use client";
+import React, { useState, useEffect } from "react";
+import { MapLayerMouseEvent, ViewState } from "react-map-gl";
+import GameInterface from "./map";
 
-export default function Home() {
-  return (
-    <div className="grid grid-rows-[20px_1fr_20px] items-center justify-items-center min-h-screen p-8 pb-20 gap-16 sm:p-20 font-[family-name:var(--font-geist-sans)]">
-      <main className="flex flex-col gap-8 row-start-2 items-center sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={180}
-          height={38}
-          priority
-        />
-        <ol className="list-inside list-decimal text-sm text-center sm:text-left font-[family-name:var(--font-geist-mono)]">
-          <li className="mb-2">
-            Get started by editing{" "}
-            <code className="bg-black/[.05] dark:bg-white/[.06] px-1 py-0.5 rounded font-semibold">
-              src/app/page.tsx
-            </code>
-            .
-          </li>
-          <li>Save and see your changes instantly.</li>
-        </ol>
-
-        <div className="flex gap-4 items-center flex-col sm:flex-row">
-          <a
-            className="rounded-full border border-solid border-transparent transition-colors flex items-center justify-center bg-foreground text-background gap-2 hover:bg-[#383838] dark:hover:bg-[#ccc] text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={20}
-              height={20}
-            />
-            Deploy now
-          </a>
-          <a
-            className="rounded-full border border-solid border-black/[.08] dark:border-white/[.145] transition-colors flex items-center justify-center hover:bg-[#f2f2f2] dark:hover:bg-[#1a1a1a] hover:border-transparent text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 sm:min-w-44"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Read our docs
-          </a>
-        </div>
-      </main>
-      <footer className="row-start-3 flex gap-6 flex-wrap items-center justify-center">
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/file.svg"
-            alt="File icon"
-            width={16}
-            height={16}
-          />
-          Learn
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/window.svg"
-            alt="Window icon"
-            width={16}
-            height={16}
-          />
-          Examples
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/globe.svg"
-            alt="Globe icon"
-            width={16}
-            height={16}
-          />
-          Go to nextjs.org →
-        </a>
-      </footer>
-    </div>
-  );
+interface CountryInfo {
+  name: string;
+  capital: string;
+  flag: string;
+  fact: string;
+  continent: string;
+  currency: string;
+  subregion: string;
+  wikiLink: string;
+  population: number;
+  area: number;
+  languages: string[];
 }
+
+interface GameSettings {
+  selectedContinent: string;
+  difficulty: "easy" | "medium" | "hard";
+  hintsRemaining: number;
+}
+
+const GeographyGame = () => {
+  const [geoJSONData, setGeoJSONData] = useState<any>(null);
+  const [countryData, setCountryData] = useState<CountryInfo[]>([]);
+  const [currentCountry, setCurrentCountry] = useState<CountryInfo | null>(
+    null
+  );
+  const [score, setScore] = useState(0);
+  const [streak, setStreak] = useState(0);
+  const [highScore, setHighScore] = useState(0);
+  const [feedback, setFeedback] = useState<string>("");
+  const [showFeedback, setShowFeedback] = useState(false);
+  const [selectedCountry, setSelectedCountry] = useState<string | null>(null);
+  const [gameActive, setGameActive] = useState(true);
+  const [settings, setSettings] = useState<GameSettings>({
+    selectedContinent: "all",
+    difficulty: "medium",
+    hintsRemaining: 3,
+  });
+  const [revealedHints, setRevealedHints] = useState<string[]>([]);
+  const [timeRemaining, setTimeRemaining] = useState<number>(60);
+  const [gameStarted, setGameStarted] = useState(false);
+
+  const [viewState, setViewState] = useState<ViewState>({
+    longitude: 0,
+    latitude: 20,
+    zoom: 1.8,
+    bearing: 0,
+    padding: { top: 0, bottom: 0, left: 0, right: 0 },
+    pitch: 0,
+  });
+
+  useEffect(() => {
+    Promise.all([
+      fetch("/geojson.json").then((response) => response.json()),
+      fetch("/countries.json").then((response) => response.json()),
+    ])
+      .then(([geoJSON, countries]) => {
+        setGeoJSONData(geoJSON);
+        setCountryData(countries);
+      })
+      .catch((error) => console.error("Error loading data:", error));
+
+    const savedHighScore = localStorage.getItem("geographyGameHighScore");
+    if (savedHighScore) setHighScore(parseInt(savedHighScore));
+  }, []);
+
+  useEffect(() => {
+    let timer: NodeJS.Timeout;
+    if (gameStarted && timeRemaining > 0) {
+      timer = setInterval(() => {
+        setTimeRemaining((prev) => prev - 1);
+      }, 1000);
+    } else if (timeRemaining === 0) {
+      endGame();
+    }
+    return () => clearInterval(timer);
+  }, [gameStarted, timeRemaining]);
+
+  const selectNewCountry = () => {
+    if (!geoJSONData || !countryData) return;
+
+    const filteredCountries = countryData.filter(
+      (country) =>
+        settings.selectedContinent === "all" ||
+        country.continent === settings.selectedContinent
+    );
+
+    const randomCountry =
+      filteredCountries[Math.floor(Math.random() * filteredCountries.length)];
+    setCurrentCountry(randomCountry);
+    setSelectedCountry(null);
+    setShowFeedback(false);
+    setGameActive(true);
+    setRevealedHints([]);
+  };
+
+  const getHint = () => {
+    if (
+      !currentCountry ||
+      settings.hintsRemaining <= 0 ||
+      revealedHints.length >= 3
+    )
+      return;
+
+    const availableHints = [
+      `Population: ${currentCountry.population.toLocaleString()}`,
+      `Area: ${currentCountry.area.toLocaleString()} km²`,
+      `Languages: ${currentCountry.languages.join(", ")}`,
+      `Subregion: ${currentCountry.subregion}`,
+      `Currency: ${currentCountry.currency}`,
+    ].filter((hint) => !revealedHints.includes(hint));
+
+    const newHint =
+      availableHints[Math.floor(Math.random() * availableHints.length)];
+    setRevealedHints((prev) => [...prev, newHint]);
+    setSettings((prev) => ({
+      ...prev,
+      hintsRemaining: prev.hintsRemaining - 1,
+    }));
+  };
+
+  const startGame = () => {
+    setGameStarted(true);
+    setScore(0);
+    setStreak(0);
+    setTimeRemaining(60);
+    selectNewCountry();
+  };
+
+  const endGame = () => {
+    setGameStarted(false);
+    setGameActive(false);
+    if (score > highScore) {
+      setHighScore(score);
+      localStorage.setItem("geographyGameHighScore", score.toString());
+    }
+  };
+
+  const handleMapClick = (event: MapLayerMouseEvent) => {
+    if (!gameActive || !currentCountry || !geoJSONData) return;
+
+    const features = event.features;
+    if (!features || features.length === 0) return;
+
+    const clickedCountry = features[0].properties.name;
+    setSelectedCountry(clickedCountry);
+    setGameActive(false);
+
+    const isCorrect = clickedCountry === currentCountry.name;
+    const pointsMultiplier = {
+      easy: 1,
+      medium: 1.5,
+      hard: 2,
+    }[settings.difficulty];
+
+    if (isCorrect) {
+      const basePoints = 100;
+      const streakBonus = streak * 20;
+      const difficultyBonus = Math.floor(
+        (basePoints + streakBonus) * pointsMultiplier
+      );
+      const timeBonus = Math.floor(timeRemaining * 2);
+      const totalPoints = difficultyBonus + timeBonus;
+
+      setScore((prev) => prev + totalPoints);
+      setStreak((prev) => prev + 1);
+      setFeedback(
+        `Correct! +${totalPoints} points (${
+          streak + 1
+        }x streak, ${timeBonus} time bonus)`
+      );
+    } else {
+      setFeedback(`Wrong! That was ${clickedCountry}`);
+      setStreak(0);
+    }
+
+    setShowFeedback(true);
+
+    setTimeout(() => {
+      selectNewCountry();
+    }, 2000);
+  };
+
+  return (
+    <GameInterface
+      score={score}
+      highScore={highScore}
+      currentCountry={currentCountry}
+      streak={streak}
+      showFeedback={showFeedback}
+      feedback={feedback}
+      gameActive={gameActive}
+      selectedCountry={selectedCountry}
+      viewState={viewState}
+      geoJSONData={geoJSONData}
+      settings={settings}
+      setSettings={setSettings}
+      revealedHints={revealedHints}
+      timeRemaining={timeRemaining}
+      gameStarted={gameStarted}
+      onGetHint={getHint}
+      onStartGame={startGame}
+      onEndGame={endGame}
+      onMapClick={handleMapClick}
+      onMove={(evt: { viewState: ViewState }) => setViewState(evt.viewState)}
+    />
+  );
+};
+
+export default GeographyGame;
