@@ -1,9 +1,10 @@
-// components/index.tsx
 "use client";
 import React, { useState, useEffect } from "react";
 import GameInterface from "./map";
+import GameSettingsDialog from "./GameSettings";
+import OnboardingFlow from "./Onboarding";
 import { useAuth } from "@/components/firebase/useAuth";
-import { doc, updateDoc, getDoc } from "firebase/firestore";
+import { doc, updateDoc, getDoc, setDoc } from "firebase/firestore";
 import { db } from "@/components/firebase/firesbase";
 import { Globe2 } from "lucide-react";
 
@@ -17,7 +18,7 @@ import {
 
 const GeographyGame = () => {
   const { user } = useAuth();
-  const [loading, setLoading] = useState(true);
+  const [initialLoading, setInitialLoading] = useState(true);
   const [geoJSONData, setGeoJSONData] = useState<any>(null);
   const [countryData, setCountryData] = useState<CountryInfo[]>([]);
   const [currentCountry, setCurrentCountry] = useState<CountryInfo | null>(
@@ -38,6 +39,9 @@ const GeographyGame = () => {
   const [revealedHints, setRevealedHints] = useState<string[]>([]);
   const [timeRemaining, setTimeRemaining] = useState<number>(60);
   const [gameStarted, setGameStarted] = useState(false);
+  const [showOnboarding, setShowOnboarding] = useState(false);
+  const [showGameSettings, setShowGameSettings] = useState(false);
+  const [isInitialized, setIsInitialized] = useState(false);
 
   const [viewState, setViewState] = useState<ViewState>({
     longitude: 0,
@@ -50,8 +54,10 @@ const GeographyGame = () => {
 
   useEffect(() => {
     const loadGameData = async () => {
-      setLoading(true);
+      if (!user) return; // Wait for user to be available
+
       try {
+        // Load game data first
         const [geoJSONResponse, countriesResponse] = await Promise.all([
           fetch("/geojson.json"),
           fetch("/countries.json"),
@@ -65,22 +71,49 @@ const GeographyGame = () => {
         setGeoJSONData(geoJSON);
         setCountryData(countries);
 
-        if (user) {
-          const userRef = doc(db, "users", user.uid);
-          const userDoc = await getDoc(userRef);
-          if (userDoc.exists()) {
-            const userData = userDoc.data() as UserData;
-            setHighScore(userData.highScore);
+        // Then load user data
+        const userRef = doc(db, "users", user.uid);
+        const userDoc = await getDoc(userRef);
+
+        if (userDoc.exists()) {
+          const userData = userDoc.data() as UserData;
+          setHighScore(userData.highScore);
+          if (!userData.hasCompletedOnboarding) {
+            setShowOnboarding(true);
+            setShowGameSettings(false);
+          } else {
+            setShowOnboarding(false);
+            setShowGameSettings(true);
           }
+        } else {
+          // Initialize new user data
+          await setDoc(userRef, {
+            uid: user.uid,
+            displayName: user.displayName,
+            email: user.email,
+            photoURL: user.photoURL,
+            hasCompletedOnboarding: false,
+            highScore: 0,
+            gamesPlayed: 0,
+            totalScore: 0,
+            bestStreak: 0,
+            lastPlayed: new Date().toISOString(),
+          });
+          setShowOnboarding(true);
+          setShowGameSettings(false);
         }
+
+        setIsInitialized(true);
       } catch (error) {
         console.error("Error loading game data:", error);
       } finally {
-        setLoading(false);
+        setInitialLoading(false);
       }
     };
 
-    loadGameData();
+    if (user) {
+      loadGameData();
+    }
   }, [user]);
 
   useEffect(() => {
@@ -111,6 +144,17 @@ const GeographyGame = () => {
         lastPlayed: new Date().toISOString(),
       });
     }
+  };
+
+  const handleCompleteOnboarding = async () => {
+    if (user) {
+      const userRef = doc(db, "users", user.uid);
+      await updateDoc(userRef, {
+        hasCompletedOnboarding: true,
+      });
+    }
+    setShowOnboarding(false);
+    setShowGameSettings(true);
   };
 
   const selectNewCountry = () => {
@@ -166,6 +210,7 @@ const GeographyGame = () => {
     };
 
     setGameStarted(true);
+    setShowGameSettings(false);
     setScore(0);
     setStreak(0);
     setTimeRemaining(difficultySettings[settings.difficulty].time);
@@ -176,6 +221,17 @@ const GeographyGame = () => {
     selectNewCountry();
   };
 
+  const handleCloseSettings = () => {
+    if (score > 0) {
+      setShowGameSettings(false);
+      setScore(0);
+      startGame();
+    } else {
+      setShowGameSettings(false);
+      setShowOnboarding(true);
+    }
+  };
+
   const endGame = async () => {
     setGameStarted(false);
     setGameActive(false);
@@ -183,6 +239,7 @@ const GeographyGame = () => {
       setHighScore(score);
     }
     await updateUserStats(score, streak);
+    setShowGameSettings(true);
   };
 
   const handleMapClick = (event: MapLayerMouseEvent) => {
@@ -230,7 +287,7 @@ const GeographyGame = () => {
     }, 2000);
   };
 
-  if (loading) {
+  if (initialLoading || !isInitialized) {
     return (
       <div className="h-screen flex items-center justify-center bg-[#001324]">
         <div className="text-white text-xl flex items-center gap-3">
@@ -242,29 +299,47 @@ const GeographyGame = () => {
   }
 
   return (
-    <GameInterface
-      user={user}
-      score={score}
-      highScore={highScore}
-      currentCountry={currentCountry}
-      streak={streak}
-      showFeedback={showFeedback}
-      feedback={feedback}
-      gameActive={gameActive}
-      selectedCountry={selectedCountry}
-      viewState={viewState}
-      geoJSONData={geoJSONData}
-      settings={settings}
-      setSettings={setSettings}
-      revealedHints={revealedHints}
-      timeRemaining={timeRemaining}
-      gameStarted={gameStarted}
-      onGetHint={getHint}
-      onStartGame={startGame}
-      onEndGame={endGame}
-      onMapClick={handleMapClick}
-      onMove={(evt: { viewState: ViewState }) => setViewState(evt.viewState)}
-    />
+    <div className="relative">
+      <OnboardingFlow
+        open={showOnboarding}
+        onComplete={handleCompleteOnboarding}
+      />
+
+      <GameSettingsDialog
+        open={!showOnboarding && !gameStarted && showGameSettings}
+        onClose={handleCloseSettings}
+        settings={settings}
+        onSettingsChange={setSettings}
+        onStartGame={startGame}
+        score={score}
+        highScore={highScore}
+        streak={streak}
+      />
+
+      <GameInterface
+        user={user}
+        score={score}
+        highScore={highScore}
+        currentCountry={currentCountry}
+        streak={streak}
+        showFeedback={showFeedback}
+        feedback={feedback}
+        gameActive={gameActive}
+        selectedCountry={selectedCountry}
+        viewState={viewState}
+        geoJSONData={geoJSONData}
+        settings={settings}
+        setSettings={setSettings}
+        revealedHints={revealedHints}
+        timeRemaining={timeRemaining}
+        gameStarted={gameStarted}
+        onGetHint={getHint}
+        onStartGame={startGame}
+        onEndGame={endGame}
+        onMapClick={handleMapClick}
+        onMove={(evt: { viewState: ViewState }) => setViewState(evt.viewState)}
+      />
+    </div>
   );
 };
 
