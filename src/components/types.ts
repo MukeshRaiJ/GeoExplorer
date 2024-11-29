@@ -1,4 +1,17 @@
-// Game Data Types
+// types.ts
+
+// Basic game types
+export type Difficulty = "easy" | "medium" | "hard";
+export type Continent =
+  | "all"
+  | "Africa"
+  | "Asia"
+  | "Europe"
+  | "North America"
+  | "South America"
+  | "Oceania";
+
+// Country information
 export interface CountryInfo {
   name: string;
   capital: string;
@@ -10,19 +23,49 @@ export interface CountryInfo {
   currency: string;
   flag: string;
   fact: string;
-  difficulty: "easy" | "medium" | "hard";
   coordinates: [number, number];
+  difficulty: Difficulty;
 }
 
-// Game Settings Types
+// Game settings
 export interface GameSettings {
-  selectedContinent: string;
-  difficulty: "easy" | "medium" | "hard";
+  selectedContinent: Continent;
+  difficulty: Difficulty;
   hintsRemaining: number;
 }
 
-// Props Types
+// View state for map
+export interface ViewState {
+  longitude: number;
+  latitude: number;
+  zoom: number;
+  bearing: number;
+  pitch: number;
+  padding: {
+    top: number;
+    bottom: number;
+    left: number;
+    right: number;
+  };
+}
+
+// User data
+export interface UserData {
+  uid: string;
+  displayName: string | null;
+  email: string | null;
+  photoURL: string | null;
+  highScore: number;
+  gamesPlayed: number;
+  totalScore: number;
+  bestStreak: number;
+  hasCompletedOnboarding?: boolean;
+  lastPlayed?: string;
+}
+
+// Game interface props
 export interface GameInterfaceProps {
+  user: UserData | null;
   score: number;
   highScore: number;
   currentCountry: CountryInfo | null;
@@ -45,91 +88,11 @@ export interface GameInterfaceProps {
   onMove: (evt: { viewState: ViewState }) => void;
 }
 
-// Re-export types from react-map-gl for convenience
-export type { MapLayerMouseEvent, ViewState } from "react-map-gl";
-
-export interface CountryInfo {
-  id: string;
-  name: string;
-  capital: string;
-  flag: string;
-  fact: string;
-  population: number;
-  area: number;
-  languages: string[];
-  subregion: string;
-  currency: string;
-  continent: string;
-  coordinates: [number, number];
-  difficulty: number; // 1-5 scale
-  hints: string[];
+// Re-export MapLayerMouseEvent from react-map-gl
+export interface MapLayerMouseEvent {
+  features?: Array<{
+    properties: {
+      name: string;
+    };
+  }>;
 }
-
-export interface GameSettings {
-  selectedContinent: string;
-  difficulty: "easy" | "medium" | "hard";
-  hintsRemaining: number;
-  gameMode: "classic" | "time-attack" | "challenge";
-  soundEnabled: boolean;
-  autoPan: boolean;
-}
-
-export interface GameState {
-  score: number;
-  streak: number;
-  highScores: {
-    classic: number;
-    timeAttack: number;
-    challenge: number;
-  };
-  gamesPlayed: number;
-  accuracy: number;
-  correctGuesses: number;
-  totalGuesses: number;
-}
-
-export interface Feedback {
-  type: "success" | "error" | "info";
-  message: string;
-  breakdown?: {
-    base: number;
-    streak: number;
-    speed: number;
-    accuracy: number;
-    difficulty: number;
-  };
-  correctAnswer?: string;
-}
-
-export interface ViewState {
-  longitude: number;
-  latitude: number;
-  zoom: number;
-  bearing: number;
-  pitch: number;
-  padding: {
-    top: number;
-    bottom: number;
-    left: number;
-    right: number;
-  };
-}
-
-
-export interface UserData {
-  uid: string;
-  displayName: string;
-  email: string;
-  photoURL: string;
-  highScore: number;
-  gamesPlayed: number;
-  totalScore: number;
-  bestStreak: number;
-}
-
-export interface LeaderboardEntry {
-  uid: string;
-  displayName: string;
-  photoURL: string;
-  highScore: number;
-  bestStreak: number;

@@ -1,24 +1,9 @@
-import React, { useState, useCallback } from "react";
-import Map, { Source, Layer } from "react-map-gl";
+import React, { useState, useCallback, useRef, useEffect } from "react";
+import Map, { Source, Layer, MapRef } from "react-map-gl";
 import { motion, AnimatePresence } from "framer-motion";
-import {
-  Trophy,
-  Lightbulb,
-  Globe2,
-  Timer,
-  Play,
-  LogOut,
-  Award,
-} from "lucide-react";
+import { Trophy, Lightbulb, Globe2, Timer, LogOut, Award } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Alert } from "@/components/ui/alert";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import {
   Dialog,
   DialogContent,
@@ -26,11 +11,9 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Leaderboard } from "@/components/Leaderboard";
-import "mapbox-gl/dist/mapbox-gl.css";
 import Image from "next/image";
 import { useAuth } from "@/components/firebase/useAuth";
-
-import { GameInterfaceProps } from "@/components/types";
+import "mapbox-gl/dist/mapbox-gl.css";
 
 const MAPBOX_TOKEN = process.env.NEXT_PUBLIC_MAPBOX_TOKEN;
 const MAPBOX_STYLE = process.env.NEXT_PUBLIC_MAPBOX_STYLE;
@@ -48,7 +31,6 @@ const GameInterface: React.FC<GameInterfaceProps> = ({
   viewState,
   geoJSONData,
   settings,
-  setSettings,
   revealedHints,
   timeRemaining,
   gameStarted,
@@ -57,14 +39,141 @@ const GameInterface: React.FC<GameInterfaceProps> = ({
   onEndGame,
   onMapClick,
   onMove,
+  onSelectNewCountry,
 }) => {
   const { signOutUser } = useAuth();
   const [mapLoaded, setMapLoaded] = useState(false);
   const [showLeaderboard, setShowLeaderboard] = useState(false);
+  const [showLocationDialog, setShowLocationDialog] = useState(false);
+  const [isRevealingCountry, setIsRevealingCountry] = useState(false);
+  const mapRef = useRef<MapRef>(null);
+
+  const calculateBounds = (geometry: any) => {
+    let allCoords: number[][] = [];
+    if (geometry.type === "Polygon") {
+      allCoords = geometry.coordinates[0];
+    } else if (geometry.type === "MultiPolygon") {
+      geometry.coordinates.forEach((polygon: number[][][]) => {
+        allCoords = [...allCoords, ...polygon[0]];
+      });
+    }
+
+    const bounds = allCoords.reduce(
+      (acc, coord) => ({
+        minLng: Math.min(acc.minLng, coord[0]),
+        maxLng: Math.max(acc.maxLng, coord[0]),
+        minLat: Math.min(acc.minLat, coord[1]),
+        maxLat: Math.max(acc.maxLat, coord[1]),
+      }),
+      { minLng: 180, maxLng: -180, minLat: 90, maxLat: -90 }
+    );
+
+    return bounds;
+  };
+
+  const flyToCountry = useCallback(
+    async (country: any) => {
+      if (!mapRef.current || !country) return;
+
+      setIsRevealingCountry(true);
+      const bounds = calculateBounds(country.geometry);
+      const boundsWidth = bounds.maxLng - bounds.minLng;
+      const boundsHeight = bounds.maxLat - bounds.minLat;
+      const maxDimension = Math.max(boundsWidth, boundsHeight);
+
+      let zoom = 4;
+      if (maxDimension > 50) zoom = 3;
+      if (maxDimension > 90) zoom = 2;
+      if (maxDimension < 20) zoom = 5;
+
+      const crossesAntimeridian = bounds.minLng > bounds.maxLng;
+      const center = crossesAntimeridian
+        ? [
+            (bounds.minLng + bounds.maxLng + 360) / 2,
+            (bounds.minLat + bounds.maxLat) / 2,
+          ]
+        : [
+            (bounds.minLng + bounds.maxLng) / 2,
+            (bounds.minLat + bounds.maxLat) / 2,
+          ];
+
+      try {
+        // First zoom in close to the country
+        await mapRef.current.flyTo({
+          center,
+          zoom: zoom + 2,
+          duration: 2000,
+          essential: true,
+        });
+
+        // Wait at close zoom
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+
+        // Then zoom out to show regional context
+        await mapRef.current.flyTo({
+          center,
+          zoom: Math.max(2, zoom - 1),
+          duration: 2000,
+          essential: true,
+        });
+
+        // Wait at regional view
+        await new Promise((resolve) => setTimeout(resolve, 6000));
+
+        // Reset view
+        await mapRef.current.flyTo({
+          center: [0, 20],
+          zoom: 2,
+          duration: 2000,
+          essential: true,
+        });
+
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+        setIsRevealingCountry(false);
+        onSelectNewCountry();
+      } catch (error) {
+        console.error("Error during fly animation:", error);
+        setIsRevealingCountry(false);
+      }
+    },
+    [onSelectNewCountry]
+  );
 
   const handleMapLoad = useCallback(() => {
     setMapLoaded(true);
   }, []);
+
+  const handleInternalMapClick = useCallback(
+    (event: any) => {
+      if (!gameActive || !currentCountry || isRevealingCountry) return;
+
+      const features = event.features;
+      if (!features || features.length === 0) return;
+
+      const clickedCountry = features[0];
+      const isCorrect = clickedCountry.properties.name === currentCountry.name;
+
+      if (!isCorrect) {
+        setShowLocationDialog(true);
+      }
+
+      onMapClick(event);
+    },
+    [currentCountry, gameActive, isRevealingCountry, onMapClick]
+  );
+
+  const showCorrectLocation = async () => {
+    if (!currentCountry || !geoJSONData) return;
+
+    const correctCountryFeature = geoJSONData.features.find(
+      (feature) => feature.properties.name === currentCountry.name
+    );
+
+    if (correctCountryFeature) {
+      setShowLocationDialog(false);
+      await flyToCountry(correctCountryFeature);
+    }
+  };
 
   const formatTime = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
@@ -74,87 +183,6 @@ const GameInterface: React.FC<GameInterfaceProps> = ({
 
   return (
     <div className="h-screen relative overflow-hidden bg-[#001324]">
-      {!gameStarted && (
-        <Dialog open={true}>
-          <DialogContent className="bg-[#001324]/95 text-white border border-white/20">
-            <DialogHeader>
-              <DialogTitle className="text-2xl">
-                {score > 0 ? "Game Over!" : "Geography Challenge Settings"}
-              </DialogTitle>
-            </DialogHeader>
-            {score === 0 ? (
-              <div className="space-y-4">
-                <div>
-                  <label className="block text-sm font-medium mb-1">
-                    Continent
-                  </label>
-                  <Select
-                    value={settings.selectedContinent}
-                    onValueChange={(value) =>
-                      setSettings({ ...settings, selectedContinent: value })
-                    }
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder="Select continent" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">All Continents</SelectItem>
-                      <SelectItem value="Africa">Africa</SelectItem>
-                      <SelectItem value="Asia">Asia</SelectItem>
-                      <SelectItem value="Europe">Europe</SelectItem>
-                      <SelectItem value="North America">
-                        North America
-                      </SelectItem>
-                      <SelectItem value="South America">
-                        South America
-                      </SelectItem>
-                      <SelectItem value="Oceania">Oceania</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div>
-                  <label className="block text-sm font-medium mb-1">
-                    Difficulty
-                  </label>
-                  <Select
-                    value={settings.difficulty}
-                    onValueChange={(value: "easy" | "medium" | "hard") =>
-                      setSettings({ ...settings, difficulty: value })
-                    }
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder="Select difficulty" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="easy">Easy (60s, 5 hints)</SelectItem>
-                      <SelectItem value="medium">
-                        Medium (45s, 3 hints)
-                      </SelectItem>
-                      <SelectItem value="hard">Hard (30s, 1 hint)</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                <Button onClick={onStartGame} className="w-full">
-                  <Play className="w-4 h-4 mr-2" />
-                  Start Game
-                </Button>
-              </div>
-            ) : (
-              <div className="space-y-4">
-                <p className="text-lg">Final Score: {score}</p>
-                {score > highScore && (
-                  <p className="text-green-500">New High Score! 🎉</p>
-                )}
-                <p>Longest Streak: {streak}</p>
-                <Button onClick={onStartGame} className="w-full">
-                  Play Again
-                </Button>
-              </div>
-            )}
-          </DialogContent>
-        </Dialog>
-      )}
-
       <motion.div
         initial={{ y: -100 }}
         animate={{ y: 0 }}
@@ -187,6 +215,7 @@ const GameInterface: React.FC<GameInterfaceProps> = ({
                   </Button>
                 </div>
               )}
+
               <motion.div
                 className="flex items-center gap-2 px-4 py-2 bg-white/10 rounded-full"
                 animate={{ scale: timeRemaining <= 10 ? [1, 1.1, 1] : 1 }}
@@ -204,6 +233,7 @@ const GameInterface: React.FC<GameInterfaceProps> = ({
                   {formatTime(timeRemaining)}
                 </span>
               </motion.div>
+
               <motion.div
                 className="flex items-center gap-4 px-4 py-2 bg-white/10 rounded-full"
                 whileHover={{ scale: 1.05 }}
@@ -212,6 +242,7 @@ const GameInterface: React.FC<GameInterfaceProps> = ({
                 <span className="text-xl font-bold text-white">{score}</span>
                 <span className="text-white/60">Best: {highScore}</span>
               </motion.div>
+
               <Button
                 variant="ghost"
                 size="sm"
@@ -225,29 +256,77 @@ const GameInterface: React.FC<GameInterfaceProps> = ({
         </div>
       </motion.div>
 
-      {/* Leaderboard Dialog */}
-      <Dialog open={showLeaderboard} onOpenChange={setShowLeaderboard}>
-        <DialogContent className="bg-[#001324]/95 text-white border border-white/20">
-          <DialogHeader>
-            <DialogTitle className="text-2xl flex items-center gap-2">
-              <Award className="w-6 h-6 text-yellow-400" />
-              Leaderboard
-            </DialogTitle>
-          </DialogHeader>
-          <Leaderboard />
-        </DialogContent>
-      </Dialog>
+      <Map
+        ref={mapRef}
+        {...viewState}
+        onMove={onMove}
+        style={{ width: "100%", height: "100%" }}
+        mapStyle={MAPBOX_STYLE}
+        mapboxAccessToken={MAPBOX_TOKEN}
+        interactiveLayerIds={
+          gameActive && !isRevealingCountry ? ["countries-fill"] : []
+        }
+        onClick={handleInternalMapClick}
+        attributionControl={false}
+        onLoad={handleMapLoad}
+      >
+        {mapLoaded && geoJSONData && (
+          <Source type="geojson" data={geoJSONData}>
+            <Layer
+              id="countries-fill"
+              type="fill"
+              paint={{
+                "fill-color": [
+                  "case",
+                  ["==", ["get", "name"], currentCountry?.name || ""],
+                  isRevealingCountry
+                    ? "rgba(34, 197, 94, 0.8)"
+                    : "rgba(255, 255, 255, 0.05)",
+                  ["==", ["get", "name"], selectedCountry || ""],
+                  selectedCountry === currentCountry?.name
+                    ? "rgba(34, 197, 94, 0.8)"
+                    : "rgba(239, 68, 68, 0.8)",
+                  "rgba(255, 255, 255, 0.05)",
+                ],
+                "fill-opacity": [
+                  "case",
+                  ["==", ["get", "name"], currentCountry?.name || ""],
+                  isRevealingCountry ? 0.8 : 0.1,
+                  ["==", ["get", "name"], selectedCountry || ""],
+                  0.8,
+                  0.1,
+                ],
+              }}
+            />
+            <Layer
+              id="countries-border"
+              type="line"
+              paint={{
+                "line-color": "#ffffff",
+                "line-width": 0.5,
+                "line-opacity": 0.4,
+              }}
+            />
+            {settings.difficulty === "easy" && !isRevealingCountry && (
+              <Layer
+                id="country-labels"
+                type="symbol"
+                layout={{
+                  "text-field": ["get", "name"],
+                  "text-size": 12,
+                  "text-anchor": "center",
+                }}
+                paint={{
+                  "text-color": "#ffffff",
+                  "text-opacity": 0.7,
+                }}
+              />
+            )}
+          </Source>
+        )}
+      </Map>
 
-      {!mapLoaded && (
-        <div className="absolute inset-0 bg-[#001324] flex items-center justify-center z-50">
-          <div className="text-white text-xl flex items-center gap-3">
-            <Globe2 className="w-8 h-8 animate-pulse" />
-            Loading Map...
-          </div>
-        </div>
-      )}
-
-      {currentCountry && (
+      {currentCountry && !isRevealingCountry && (
         <motion.div
           initial={{ opacity: 0, x: -20 }}
           animate={{ opacity: 1, x: 0 }}
@@ -287,6 +366,7 @@ const GameInterface: React.FC<GameInterfaceProps> = ({
                     onClick={onGetHint}
                     variant="ghost"
                     className="w-full text-white hover:bg-white/20 transition-colors"
+                    disabled={isRevealingCountry}
                   >
                     <Lightbulb className="w-4 h-4 mr-2" />
                     Get Hint ({settings.hintsRemaining})
@@ -298,6 +378,7 @@ const GameInterface: React.FC<GameInterfaceProps> = ({
                 onClick={onEndGame}
                 variant="destructive"
                 className="w-full bg-red-500/60 hover:bg-red-500/80 transition-colors"
+                disabled={isRevealingCountry}
               >
                 End Game
               </Button>
@@ -306,84 +387,61 @@ const GameInterface: React.FC<GameInterfaceProps> = ({
         </motion.div>
       )}
 
-      <Map
-        {...viewState}
-        onMove={onMove}
-        style={{ width: "100%", height: "100%" }}
-        mapStyle={MAPBOX_STYLE}
-        mapboxAccessToken={MAPBOX_TOKEN}
-        interactiveLayerIds={gameActive ? ["countries-fill"] : []}
-        onClick={onMapClick}
-        attributionControl={false}
-        onLoad={handleMapLoad}
-        preserveDrawingBuffer
-      >
-        {mapLoaded && geoJSONData && (
-          <Source type="geojson" data={geoJSONData}>
-            <Layer
-              id="countries-fill"
-              type="fill"
-              paint={{
-                "fill-color": [
-                  "case",
-                  ["==", ["get", "name"], selectedCountry],
-                  selectedCountry === currentCountry?.name
-                    ? "rgba(34, 197, 94, 0.8)"
-                    : "rgba(239, 68, 68, 0.8)",
-                  "rgba(255, 255, 255, 0.05)",
-                ],
-                "fill-opacity": [
-                  "case",
-                  ["==", ["get", "name"], selectedCountry],
-                  0.8,
-                  0.1,
-                ],
-              }}
-            />
-            <Layer
-              id="countries-border"
-              type="line"
-              paint={{
-                "line-color": "#ffffff",
-                "line-width": 0.5,
-                "line-opacity": 0.4,
-              }}
-            />
-            {settings.difficulty === "easy" && (
-              <Layer
-                id="country-labels"
-                type="symbol"
-                layout={{
-                  "text-field": ["get", "name"],
-                  "text-size": 12,
-                  "text-anchor": "center",
-                }}
-                paint={{
-                  "text-color": "#ffffff",
-                  "text-opacity": 0.7,
-                }}
-              />
-            )}
-          </Source>
-        )}
-      </Map>
+      <Dialog open={showLeaderboard} onOpenChange={setShowLeaderboard}>
+        <DialogContent className="bg-[#001324]/95 text-white border border-white/20">
+          <DialogHeader>
+            <DialogTitle className="text-2xl flex items-center gap-2">
+              <Award className="w-6 h-6 text-yellow-400" />
+              Leaderboard
+            </DialogTitle>
+          </DialogHeader>
+          <Leaderboard />
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={showLocationDialog} onOpenChange={setShowLocationDialog}>
+        <DialogContent className="bg-[#001324]/95 text-white border border-white/20">
+          <DialogHeader>
+            <DialogTitle>
+              Would you like to see the correct location?
+            </DialogTitle>
+          </DialogHeader>
+          <div className="flex justify-end gap-4">
+            <Button
+              variant="ghost"
+              onClick={() => setShowLocationDialog(false)}
+            >
+              Continue Playing
+            </Button>
+            <Button onClick={showCorrectLocation} disabled={isRevealingCountry}>
+              Show Location
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       <AnimatePresence mode="wait">
-        {showFeedback && (
+        {showFeedback && !isRevealingCountry && (
           <motion.div
             key="feedback"
             initial={{ opacity: 0, y: -20 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -20 }}
-            className="absolute top-20 left-1/2 -translate-x-1/2 max-w-sm"
+            className="absolute top-20 left-1/2 -translate-x-1/2 max-w-sm z-20"
           >
-            <Alert className="backdrop-blur-md border shadow-lg bg-white/10 border-white/20 text-white">
+            <Alert
+              className={`backdrop-blur-md border shadow-lg bg-white/10 border-white/20 text-white ${
+                feedback.includes("Correct")
+                  ? "border-green-500/50"
+                  : "border-red-500/50"
+              }`}
+            >
               <p className="text-lg font-bold">{feedback}</p>
             </Alert>
           </motion.div>
         )}
 
-        {streak > 0 && (
+        {streak > 0 && !isRevealingCountry && (
           <motion.div
             key="streak"
             initial={{ opacity: 0, scale: 0.8 }}
@@ -407,6 +465,16 @@ const GameInterface: React.FC<GameInterfaceProps> = ({
           </motion.div>
         )}
       </AnimatePresence>
+
+      {gameStarted && score === 0 && !isRevealingCountry && (
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="absolute bottom-4 left-1/2 -translate-x-1/2 bg-white/10 backdrop-blur-md px-6 py-3 rounded-full shadow-lg text-white text-sm"
+        >
+          Click on the country you think matches the flag and description
+        </motion.div>
+      )}
     </div>
   );
 };

@@ -1,4 +1,4 @@
-// components/GameSettings.tsx
+// GameSettings.tsx
 import React from "react";
 import {
   Dialog,
@@ -14,8 +14,9 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
-import { GameSettings } from "@/components/types";
+import { GameSettings, Continent, Difficulty } from "@/components/types";
 
+// Define the props interface
 interface GameSettingsProps {
   open: boolean;
   onClose: () => void;
@@ -50,7 +51,7 @@ const GameSettingsDialog: React.FC<GameSettingsProps> = ({
             <label className="block text-sm font-medium mb-1">Continent</label>
             <Select
               value={settings.selectedContinent}
-              onValueChange={(value) =>
+              onValueChange={(value: Continent) =>
                 onSettingsChange({ ...settings, selectedContinent: value })
               }
             >
@@ -73,7 +74,7 @@ const GameSettingsDialog: React.FC<GameSettingsProps> = ({
             <label className="block text-sm font-medium mb-1">Difficulty</label>
             <Select
               value={settings.difficulty}
-              onValueChange={(value: "easy" | "medium" | "hard") =>
+              onValueChange={(value: Difficulty) =>
                 onSettingsChange({ ...settings, difficulty: value })
               }
             >
